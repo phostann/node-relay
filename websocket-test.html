@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>WebSocket 测试工具</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="text"], input[type="number"] {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+        }
+        button {
+            padding: 8px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            margin-right: 10px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 3px;
+            margin-top: 10px;
+        }
+        .connected {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .disconnected {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        .connecting {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        #messages {
+            height: 300px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 10px;
+            background-color: #f9f9f9;
+            margin-top: 20px;
+        }
+        .message {
+            margin-bottom: 5px;
+            padding: 5px;
+            border-bottom: 1px solid #eee;
+        }
+        .message.ping {
+            color: #0066cc;
+        }
+        .message.pong {
+            color: #006633;
+        }
+        .message.error {
+            color: #cc0000;
+        }
+    </style>
+</head>
+<body>
+    <h1>WebSocket 测试工具</h1>
+    
+    <div class="container">
+        <h2>连接设置</h2>
+        <div class="form-group">
+            <label for="serverUrl">服务器地址</label>
+            <input type="text" id="serverUrl" value="ws://localhost:8080/socket/node/">
+        </div>
+        <div class="form-group">
+            <label for="uid">UID</label>
+            <input type="text" id="uid" value="12345">
+        </div>
+        <div class="form-group">
+            <label for="heartbeatInterval">心跳间隔 (毫秒)</label>
+            <input type="number" id="heartbeatInterval" value="10000">
+        </div>
+        
+        <button id="connectBtn">连接</button>
+        <button id="disconnectBtn" disabled>断开连接</button>
+        
+        <div id="statusIndicator" class="status disconnected">
+            状态: 未连接
+        </div>
+    </div>
+    
+    <div class="container">
+        <h2>心跳控制</h2>
+        <div class="form-group">
+            <label for="heartbeatStatus">心跳状态</label>
+            <div id="heartbeatStatus">未启动</div>
+        </div>
+        
+        <button id="startHeartbeatBtn" disabled>开始心跳</button>
+        <button id="stopHeartbeatBtn" disabled>停止心跳</button>
+        <button id="sendPingBtn" disabled>发送单次 Ping</button>
+    </div>
+    
+    <div class="container">
+        <h2>测试操作</h2>
+        <button id="simulateNetworkErrorBtn" disabled>模拟网络错误</button>
+        <button id="simulateClientCrashBtn" disabled>模拟客户端崩溃</button>
+    </div>
+    
+    <div class="container">
+        <h2>消息日志</h2>
+        <button id="clearLogBtn">清空日志</button>
+        <div id="messages"></div>
+    </div>
+    
+    <script>
+        // 全局变量
+        let socket = null;
+        let heartbeatInterval = null;
+        let missedHeartbeats = 0;
+        const MAX_MISSED_HEARTBEATS = 3;
+        
+        // DOM 元素
+        const connectBtn = document.getElementById('connectBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const startHeartbeatBtn = document.getElementById('startHeartbeatBtn');
+        const stopHeartbeatBtn = document.getElementById('stopHeartbeatBtn');
+        const sendPingBtn = document.getElementById('sendPingBtn');
+        const simulateNetworkErrorBtn = document.getElementById('simulateNetworkErrorBtn');
+        const simulateClientCrashBtn = document.getElementById('simulateClientCrashBtn');
+        const clearLogBtn = document.getElementById('clearLogBtn');
+        const statusIndicator = document.getElementById('statusIndicator');
+        const heartbeatStatusElement = document.getElementById('heartbeatStatus');
+        const messagesContainer = document.getElementById('messages');
+        
+        // 辅助函数
+        function updateStatus(status, message) {
+            statusIndicator.className = `status ${status}`;
+            statusIndicator.textContent = `状态: ${message}`;
+        }
+        
+        function updateHeartbeatStatus(status) {
+            heartbeatStatusElement.textContent = status;
+        }
+        
+        function addMessage(message, type = '') {
+            const msgElement = document.createElement('div');
+            msgElement.className = `message ${type}`;
+            msgElement.textContent = `${new Date().toLocaleTimeString()} - ${message}`;
+            messagesContainer.appendChild(msgElement);
+            messagesContainer.scrollTop = messagesContainer.scrollHeight;
+        }
+        
+        function updateButtons(connected, heartbeatActive) {
+            connectBtn.disabled = connected;
+            disconnectBtn.disabled = !connected;
+            startHeartbeatBtn.disabled = !connected || heartbeatActive;
+            stopHeartbeatBtn.disabled = !connected || !heartbeatActive;
+            sendPingBtn.disabled = !connected;
+            simulateNetworkErrorBtn.disabled = !connected;
+            simulateClientCrashBtn.disabled = !connected;
+        }
+        
+        // 事件处理函数
+        connectBtn.addEventListener('click', function() {
+            const serverUrl = document.getElementById('serverUrl').value;
+            const uid = document.getElementById('uid').value;
+            const fullUrl = `${serverUrl}${uid}`;
+            
+            try {
+                updateStatus('connecting', '正在连接...');
+                socket = new WebSocket(fullUrl);
+                
+                socket.addEventListener('open', function(event) {
+                    updateStatus('connected', '已连接');
+                    addMessage(`WebSocket连接已建立: ${fullUrl}`, 'info');
+                    updateButtons(true, false);
+                });
+                
+                socket.addEventListener('message', function(event) {
+                    try {
+                        const data = JSON.parse(event.data);
+                        if (data.type === 'pong') {
+                            missedHeartbeats = 0;
+                            addMessage(`收到心跳响应: ${event.data}`, 'pong');
+                        } else {
+                            addMessage(`收到消息: ${event.data}`);
+                        }
+                    } catch (e) {
+                        addMessage(`收到消息: ${event.data}`);
+                    }
+                });
+                
+                socket.addEventListener('close', function(event) {
+                    updateStatus('disconnected', '已断开连接');
+                    addMessage(`WebSocket连接已关闭: 代码=${event.code}, 原因=${event.reason}`, 'error');
+                    stopHeartbeat();
+                    updateButtons(false, false);
+                    socket = null;
+                });
+                
+                socket.addEventListener('error', function(event) {
+                    updateStatus('disconnected', '连接错误');
+                    addMessage('WebSocket连接发生错误', 'error');
+                    updateButtons(false, false);
+                });
+            } catch (error) {
+                updateStatus('disconnected', '连接失败');
+                addMessage(`创建WebSocket时发生错误: ${error.message}`, 'error');
+            }
+        });
+        
+        disconnectBtn.addEventListener('click', function() {
+            if (socket) {
+                socket.close(1000, "用户主动断开连接");
+                addMessage('用户主动断开连接', 'info');
+            }
+        });
+        
+        function startHeartbeat() {
+            const interval = parseInt(document.getElementById('heartbeatInterval').value);
+            if (isNaN(interval) || interval < 1000) {
+                addMessage('心跳间隔必须大于1000毫秒', 'error');
+                return;
+            }
+            
+            stopHeartbeat(); // 确保之前的心跳已停止
+            
+            missedHeartbeats = 0;
+            heartbeatInterval = setInterval(function() {
+                if (socket && socket.readyState === WebSocket.OPEN) {
+                    // 检查是否超过最大错过心跳次数
+                    if (missedHeartbeats >= MAX_MISSED_HEARTBEATS) {
+                        addMessage(`超过${MAX_MISSED_HEARTBEATS}次未收到心跳响应，认为连接已断开`, 'error');
+                        socket.close(1001, "心跳超时");
+                        return;
+                    }
+                    
+                    try {
+                        missedHeartbeats++;
+                        const pingData = JSON.stringify({ type: 'ping', timestamp: Date.now() });
+                        socket.send(pingData);
+                        addMessage(`发送心跳: ${pingData}`, 'ping');
+                    } catch (error) {
+                        addMessage(`发送心跳失败: ${error.message}`, 'error');
+                        stopHeartbeat();
+                    }
+                } else {
+                    addMessage('WebSocket未连接，停止心跳', 'error');
+                    stopHeartbeat();
+                }
+            }, interval);
+            
+            updateHeartbeatStatus(`已启动 (间隔: ${interval}ms)`);
+            updateButtons(true, true);
+        }
+        
+        function stopHeartbeat() {
+            if (heartbeatInterval) {
+                clearInterval(heartbeatInterval);
+                heartbeatInterval = null;
+                updateHeartbeatStatus('已停止');
+                updateButtons(socket !== null, false);
+                addMessage('心跳检测已停止', 'info');
+            }
+        }
+        
+        startHeartbeatBtn.addEventListener('click', startHeartbeat);
+        stopHeartbeatBtn.addEventListener('click', stopHeartbeat);
+        
+        sendPingBtn.addEventListener('click', function() {
+            if (socket && socket.readyState === WebSocket.OPEN) {
+                try {
+                    const pingData = JSON.stringify({ type: 'ping', timestamp: Date.now() });
+                    socket.send(pingData);
+                    addMessage(`发送单次Ping: ${pingData}`, 'ping');
+                } catch (error) {
+                    addMessage(`发送Ping失败: ${error.message}`, 'error');
+                }
+            } else {
+                addMessage('WebSocket未连接，无法发送Ping', 'error');
+            }
+        });
+        
+        simulateNetworkErrorBtn.addEventListener('click', function() {
+            if (socket) {
+                addMessage('模拟网络错误: 强制关闭连接而不发送关闭帧', 'info');
+                // 在WebSocket API中无法直接模拟网络错误
+                // 一种方法是使用一个无效的操作然后立即关闭
+                socket.close(3000, "模拟网络错误");
+            }
+        });
+        
+        simulateClientCrashBtn.addEventListener('click', function() {
+            if (socket) {
+                addMessage('模拟客户端崩溃: 不执行正常关闭流程', 'info');
+                // 模拟崩溃：我们直接设置socket为null，而不是正常关闭
+                const tempSocket = socket;
+                socket = null;
+                updateStatus('disconnected', '模拟崩溃 (连接未正常关闭)');
+                updateButtons(false, false);
+                stopHeartbeat();
+                // 通常，真正的崩溃不会调用以下代码，但为了测试目的
+                setTimeout(() => {
+                    if (tempSocket && tempSocket.readyState === WebSocket.OPEN) {
+                        tempSocket.close(3001, "模拟客户端崩溃后的清理");
+                    }
+                }, 100);
+            }
+        });
+        
+        clearLogBtn.addEventListener('click', function() {
+            messagesContainer.innerHTML = '';
+            addMessage('日志已清空', 'info');
+        });
+        
+        // 初始化
+        updateStatus('disconnected', '未连接');
+        addMessage('WebSocket测试页面已加载', 'info');
+    </script>
+</body>
+</html> 
