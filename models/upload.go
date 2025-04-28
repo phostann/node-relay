@@ -6,12 +6,14 @@ import (
 
 // UploadInfo 上传信息结构体
 type UploadInfo struct {
-	FileID      string // 文件唯一标识
-	FileName    string // 文件名
-	TotalChunks int    // 总块数
-	TotalSize   int64  // 文件总大小
-	ChunkSize   int64  // 每个块的大小
-	Completed   []bool // 已完成的块
+	FileID      string         // 文件唯一标识
+	FileName    string         // 文件名
+	TotalChunks int            // 总块数
+	TotalSize   int64          // 文件总大小
+	ChunkSize   int64          // 每个块的大小
+	Completed   []bool         // 已完成的块
+	FileHash    string         // 整个文件的哈希值（由客户端提供）
+	ChunkHashes map[int]string // 分块哈希值映射
 	Mu          sync.Mutex
 }
 

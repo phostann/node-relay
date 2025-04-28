@@ -1,6 +1,7 @@
 package main
 
 import (
+	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 
 	"com.example/relay/config"
@@ -12,6 +13,10 @@ func main() {
 	config.Init()
 
 	router := gin.Default()
+
+	// cors
+	router.Use(cors.Default())
+
 	// 增加最大请求体大小限制
 	router.MaxMultipartMemory = 8 << 20 // 8 MiB
 

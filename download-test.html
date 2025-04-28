@@ -1,0 +1,857 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>大文件下载测试</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .container {
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+        .form-group {
+            margin-bottom: 15px;
+        }
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        input[type="text"],
+        input[type="number"],
+        input[type="checkbox"],
+        select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 3px;
+            margin-top: 5px;
+        }
+        .checkbox-container {
+            display: flex;
+            align-items: center;
+        }
+        .checkbox-container input {
+            width: auto;
+            margin-right: 8px;
+        }
+        button {
+            padding: 8px 15px;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 3px;
+            cursor: pointer;
+            margin-right: 10px;
+            margin-top: 5px;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        .progress-container {
+            margin-top: 20px;
+            display: none;
+        }
+        .progress-info {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 5px;
+        }
+        .progress-bar {
+            height: 20px;
+            background-color: #f0f0f0;
+            border-radius: 10px;
+            overflow: hidden;
+        }
+        .progress-bar-inner {
+            height: 100%;
+            width: 0;
+            background-color: #4CAF50;
+            transition: width 0.2s;
+        }
+        .chunks-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(20px, 1fr));
+            gap: 5px;
+            margin-top: 10px;
+        }
+        .chunk {
+            height: 20px;
+            background-color: #ddd;
+            border-radius: 3px;
+        }
+        .chunk.downloaded {
+            background-color: #4CAF50;
+        }
+        .chunk.verified {
+            background-color: #4CAF50;
+            border: 2px solid #388E3C;
+        }
+        .chunk.downloading {
+            background-color: #2196F3;
+            animation: pulse 1s infinite;
+        }
+        .download-result, .error-message {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 3px;
+        }
+        .download-result {
+            background-color: #d4edda;
+            color: #155724;
+            display: none;
+        }
+        .error-message {
+            background-color: #f8d7da;
+            color: #721c24;
+            display: none;
+        }
+        .file-info {
+            margin-top: 15px;
+            background-color: #e9ecef;
+            padding: 10px;
+            border-radius: 3px;
+            display: none;
+        }
+        .files-list {
+            margin-top: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+        .file-item {
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+        }
+        .file-item:hover {
+            background-color: #f5f5f5;
+        }
+        .file-item:last-child {
+            border-bottom: none;
+        }
+        .button-group {
+            margin-top: 15px;
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+        .integrity-info {
+            margin-top: 10px;
+            padding: 8px;
+            border-radius: 3px;
+            background-color: #e3f2fd;
+            color: #0d47a1;
+            font-size: 14px;
+        }
+        .verification-success {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .verification-failed {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+        @keyframes pulse {
+            0% { opacity: 1; }
+            50% { opacity: 0.5; }
+            100% { opacity: 1; }
+        }
+    </style>
+</head>
+<body>
+    <h1>大文件下载测试</h1>
+    
+    <div class="container">
+        <h2>文件下载</h2>
+        <div class="form-group">
+            <label for="fileName">文件名称</label>
+            <input type="text" id="fileName" placeholder="请输入要下载的文件名">
+        </div>
+        <div class="form-group">
+            <label for="chunkSize">分块大小 (MB)</label>
+            <input type="number" id="chunkSize" min="1" max="10" value="1">
+        </div>
+        <div class="form-group">
+            <label for="parallelDownloads">并行下载数</label>
+            <input type="number" id="parallelDownloads" min="1" max="5" value="3">
+        </div>
+        <div class="form-group">
+            <div class="checkbox-container">
+                <input type="checkbox" id="enableIntegrityCheck" checked>
+                <label for="enableIntegrityCheck">启用完整性校验</label>
+            </div>
+            <div class="integrity-info">
+                完整性校验将验证文件和分块的哈希值，确保文件传输过程中的数据完整性
+            </div>
+        </div>
+        
+        <div class="button-group">
+            <button id="listFilesBtn">列出可下载文件</button>
+            <button id="simpleDownloadBtn" disabled>简单下载</button>
+            <button id="initDownloadBtn" disabled>初始化分块下载</button>
+        </div>
+    </div>
+    
+    <div class="files-list" id="filesList" style="display: none;"></div>
+    
+    <div class="file-info" id="fileInfo">
+        <div><strong>文件名:</strong> <span id="fileNameInfo"></span></div>
+        <div><strong>文件大小:</strong> <span id="fileSizeInfo"></span></div>
+        <div><strong>总块数:</strong> <span id="totalChunksInfo"></span></div>
+        <div><strong>块大小:</strong> <span id="chunkSizeInfo"></span></div>
+        <div><strong>文件哈希:</strong> <span id="fileHashInfo"></span></div>
+    </div>
+    
+    <div class="progress-container" id="progressContainer">
+        <div class="progress-info">
+            <span id="downloadStatus">准备下载...</span>
+            <span id="downloadPercentage">0%</span>
+        </div>
+        <div class="progress-bar">
+            <div class="progress-bar-inner" id="progressBar"></div>
+        </div>
+        <div class="chunks-grid" id="chunksGrid"></div>
+        <div id="downloadSpeed"></div>
+        <div id="hashProgressInfo" class="integrity-info" style="display: none;"></div>
+    </div>
+    
+    <div class="button-group" id="downloadControls" style="display: none;">
+        <button id="startDownloadBtn">开始下载</button>
+        <button id="pauseBtn">暂停下载</button>
+        <button id="resumeBtn">继续下载</button>
+        <button id="saveFileBtn" disabled>保存文件</button>
+        <button id="cancelBtn">取消下载</button>
+        <button id="verifyFileBtn" disabled>校验文件完整性</button>
+    </div>
+    
+    <div class="download-result" id="downloadResult"></div>
+    <div class="error-message" id="errorMessage"></div>
+    
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            // 获取DOM元素
+            const fileNameInput = document.getElementById('fileName');
+            const chunkSizeInput = document.getElementById('chunkSize');
+            const parallelDownloadsInput = document.getElementById('parallelDownloads');
+            const listFilesBtn = document.getElementById('listFilesBtn');
+            const simpleDownloadBtn = document.getElementById('simpleDownloadBtn');
+            const initDownloadBtn = document.getElementById('initDownloadBtn');
+            const startDownloadBtn = document.getElementById('startDownloadBtn');
+            const pauseBtn = document.getElementById('pauseBtn');
+            const resumeBtn = document.getElementById('resumeBtn');
+            const saveFileBtn = document.getElementById('saveFileBtn');
+            const cancelBtn = document.getElementById('cancelBtn');
+            const verifyFileBtn = document.getElementById('verifyFileBtn');
+            const filesList = document.getElementById('filesList');
+            const fileNameInfo = document.getElementById('fileNameInfo');
+            const fileSizeInfo = document.getElementById('fileSizeInfo');
+            const totalChunksInfo = document.getElementById('totalChunksInfo');
+            const chunkSizeInfo = document.getElementById('chunkSizeInfo');
+            const fileHashInfo = document.getElementById('fileHashInfo');
+            const fileInfo = document.getElementById('fileInfo');
+            const progressBar = document.getElementById('progressBar');
+            const downloadPercentage = document.getElementById('downloadPercentage');
+            const downloadStatus = document.getElementById('downloadStatus');
+            const downloadSpeed = document.getElementById('downloadSpeed');
+            const chunksGrid = document.getElementById('chunksGrid');
+            const progressContainer = document.getElementById('progressContainer');
+            const downloadControls = document.getElementById('downloadControls');
+            const downloadResult = document.getElementById('downloadResult');
+            const errorMessage = document.getElementById('errorMessage');
+            const enableIntegrityCheck = document.getElementById('enableIntegrityCheck');
+            const hashProgressInfo = document.getElementById('hashProgressInfo');
+            
+            // 下载状态变量
+            let selectedFileName = '';
+            let chunkSize = 1 * 1024 * 1024; // 默认1MB
+            let fileId = null;
+            let fileSize = 0;
+            let totalChunks = 0;
+            let chunkSizeBytes = 0;
+            let fileHash = null;
+            let chunkHashes = {};
+            let downloadedChunks = [];
+            let downloadQueue = [];
+            let activeDownloads = 0;
+            let isDownloading = false;
+            let isPaused = false;
+            let downloadStartTime = 0;
+            let downloadedBytes = 0;
+            let speedInterval = null;
+            let downloadedData = []; // 存储下载的二进制数据
+            let isIntegrityCheckEnabled = true;
+            let hashCompletedChunks = 0;
+            
+            // API基础URL
+            const apiBaseUrl = 'http://localhost:8080/file';
+            
+            // 按钮事件绑定
+            listFilesBtn.addEventListener('click', listFiles);
+            simpleDownloadBtn.addEventListener('click', simpleDownload);
+            initDownloadBtn.addEventListener('click', initDownload);
+            startDownloadBtn.addEventListener('click', startDownload);
+            pauseBtn.addEventListener('click', pauseDownload);
+            resumeBtn.addEventListener('click', resumeDownload);
+            saveFileBtn.addEventListener('click', saveFile);
+            cancelBtn.addEventListener('click', cancelDownload);
+            verifyFileBtn.addEventListener('click', verifyDownloadedFile);
+            enableIntegrityCheck.addEventListener('change', toggleIntegrityCheck);
+            
+            // 文件名输入监听
+            fileNameInput.addEventListener('input', function() {
+                const fileName = fileNameInput.value.trim();
+                simpleDownloadBtn.disabled = !fileName;
+                initDownloadBtn.disabled = !fileName;
+            });
+            
+            // 切换完整性校验
+            function toggleIntegrityCheck() {
+                isIntegrityCheckEnabled = enableIntegrityCheck.checked;
+                
+                if (fileId && isIntegrityCheckEnabled) {
+                    fetchHashProgress();
+                } else if (!isIntegrityCheckEnabled) {
+                    hashProgressInfo.style.display = 'none';
+                }
+            }
+            
+            // 获取可下载文件列表
+            async function listFiles() {
+                try {
+                    // 这里需要后端提供一个列出可下载文件的接口
+                    // 由于代码中没有提供，这里使用模拟数据
+                    
+                    // 请求服务器以获取文件列表
+                    /*
+                    const response = await fetch(`${apiBaseUrl}/list`);
+                    if (!response.ok) {
+                        throw new Error('获取文件列表失败');
+                    }
+                    const data = await response.json();
+                    const files = data.files || [];
+                    */
+                    
+                    // 模拟数据
+                    const files = [
+                        { name: 'example1.txt', size: 1024 * 1024 * 2 },
+                        { name: 'example2.pdf', size: 1024 * 1024 * 15 },
+                        { name: 'example3.zip', size: 1024 * 1024 * 50 },
+                        { name: 'example4.iso', size: 1024 * 1024 * 150 }
+                    ];
+                    
+                    // 显示文件列表
+                    filesList.innerHTML = '';
+                    if (files.length === 0) {
+                        const emptyItem = document.createElement('div');
+                        emptyItem.className = 'file-item';
+                        emptyItem.textContent = '没有可下载的文件';
+                        filesList.appendChild(emptyItem);
+                    } else {
+                        files.forEach(file => {
+                            const fileItem = document.createElement('div');
+                            fileItem.className = 'file-item';
+                            fileItem.textContent = `${file.name} (${formatFileSize(file.size)})`;
+                            fileItem.addEventListener('click', () => {
+                                fileNameInput.value = file.name;
+                                simpleDownloadBtn.disabled = false;
+                                initDownloadBtn.disabled = false;
+                            });
+                            filesList.appendChild(fileItem);
+                        });
+                    }
+                    
+                    filesList.style.display = 'block';
+                } catch (error) {
+                    showError('获取文件列表失败: ' + error.message);
+                }
+            }
+            
+            // 简单下载（直接使用浏览器下载）
+            function simpleDownload() {
+                const fileName = fileNameInput.value.trim();
+                if (!fileName) return;
+                
+                // 直接使用浏览器下载
+                const downloadUrl = `${apiBaseUrl}/download?fileName=${encodeURIComponent(fileName)}`;
+                window.location.href = downloadUrl;
+            }
+            
+            // 初始化分块下载
+            async function initDownload() {
+                const fileName = fileNameInput.value.trim();
+                if (!fileName) return;
+                
+                selectedFileName = fileName;
+                const chunkSizeMB = parseInt(chunkSizeInput.value) || 1;
+                chunkSize = chunkSizeMB * 1024 * 1024;
+                
+                resetDownloadUI();
+                
+                try {
+                    downloadStatus.textContent = '初始化下载...';
+                    
+                    // 请求初始化下载
+                    const response = await fetch(`${apiBaseUrl}/download/init?fileName=${encodeURIComponent(fileName)}&chunkSize=${chunkSize}`);
+                    
+                    if (!response.ok) {
+                        const errorData = await response.json();
+                        throw new Error(errorData.error || '初始化下载失败');
+                    }
+                    
+                    const data = await response.json();
+                    
+                    // 保存下载信息
+                    fileId = data.fileID;
+                    fileSize = data.fileSize;
+                    totalChunks = data.totalChunks;
+                    chunkSizeBytes = data.chunkSize;
+                    fileHash = data.fileHash;
+                    
+                    // 重置下载状态
+                    downloadedChunks = Array(totalChunks).fill(false);
+                    downloadQueue = Array.from({length: totalChunks}, (_, i) => i);
+                    downloadedData = new Array(totalChunks);
+                    chunkHashes = {};
+                    
+                    // 显示文件信息
+                    fileNameInfo.textContent = data.fileName;
+                    fileSizeInfo.textContent = formatFileSize(data.fileSize);
+                    totalChunksInfo.textContent = data.totalChunks;
+                    chunkSizeInfo.textContent = formatFileSize(data.chunkSize);
+                    fileHashInfo.textContent = data.fileHash || '无哈希信息';
+                    fileInfo.style.display = 'block';
+                    
+                    // 初始化分块网格
+                    initChunksGrid();
+                    
+                    // 显示下载控制UI
+                    progressContainer.style.display = 'block';
+                    downloadControls.style.display = 'flex';
+                    
+                    // 如果启用了完整性校验，获取分块哈希计算进度
+                    if (isIntegrityCheckEnabled) {
+                        hashProgressInfo.textContent = '正在获取哈希计算进度...';
+                        hashProgressInfo.style.display = 'block';
+                        fetchHashProgress();
+                    }
+                    
+                    downloadStatus.textContent = `下载初始化成功，共 ${totalChunks} 块`;
+                } catch (error) {
+                    showError('初始化下载失败: ' + error.message);
+                }
+            }
+            
+            // 获取分块哈希计算进度
+            async function fetchHashProgress() {
+                if (!fileId || !isIntegrityCheckEnabled) return;
+                
+                try {
+                    const response = await fetch(`${apiBaseUrl}/download/info?fileID=${fileId}`);
+                    
+                    if (!response.ok) {
+                        throw new Error('获取下载信息失败');
+                    }
+                    
+                    const data = await response.json();
+                    
+                    hashCompletedChunks = data.hashCompletedChunks || 0;
+                    const hashProgress = data.hashProgress || 0;
+                    
+                    hashProgressInfo.textContent = `哈希计算进度: ${hashCompletedChunks}/${totalChunks} 块 (${hashProgress.toFixed(2)}%)`;
+                    hashProgressInfo.style.display = 'block';
+                    
+                    // 如果哈希计算未完成，定时更新进度
+                    if (hashCompletedChunks < totalChunks) {
+                        setTimeout(fetchHashProgress, 2000); // 每2秒更新一次
+                    }
+                } catch (error) {
+                    console.error('获取哈希进度失败:', error);
+                    hashProgressInfo.textContent = '获取哈希进度失败';
+                }
+            }
+            
+            // 开始下载
+            function startDownload() {
+                if (!fileId) return;
+                
+                // 设置下载状态
+                isDownloading = true;
+                isPaused = false;
+                
+                // 更新按钮状态
+                startDownloadBtn.disabled = true;
+                pauseBtn.disabled = false;
+                resumeBtn.disabled = true;
+                saveFileBtn.disabled = true;
+                verifyFileBtn.disabled = true;
+                
+                // 开始下载分块
+                downloadStartTime = Date.now();
+                downloadedBytes = 0;
+                startDownloadChunks();
+                
+                // 开始计算下载速度
+                startSpeedCalculation();
+            }
+            
+            // 开始下载分块
+            function startDownloadChunks() {
+                const parallelDownloads = parseInt(parallelDownloadsInput.value) || 3;
+                
+                // 确保不超过最大并行数
+                while (activeDownloads < parallelDownloads && downloadQueue.length > 0 && isDownloading && !isPaused) {
+                    const chunkIndex = downloadQueue.shift();
+                    downloadChunk(chunkIndex);
+                }
+            }
+            
+            // 下载单个分块
+            async function downloadChunk(chunkIndex) {
+                if (downloadedChunks[chunkIndex] || !isDownloading || isPaused) return;
+                
+                activeDownloads++;
+                
+                // 更新UI
+                const chunkElement = document.getElementById(`chunk-${chunkIndex}`);
+                if (chunkElement) {
+                    chunkElement.classList.add('downloading');
+                }
+                
+                try {
+                    // 计算此分块的预期大小
+                    const start = chunkIndex * chunkSizeBytes;
+                    const end = Math.min(start + chunkSizeBytes, fileSize);
+                    const expectedSize = end - start;
+                    
+                    // 发送请求
+                    const response = await fetch(`${apiBaseUrl}/download/chunk?fileID=${fileId}&chunkIndex=${chunkIndex}`);
+                    
+                    if (!response.ok) {
+                        const errorData = await response.text();
+                        throw new Error(errorData || '下载分块失败');
+                    }
+                    
+                    // 获取分块哈希（如果服务器提供）
+                    const chunkHash = response.headers.get('X-Chunk-Hash');
+                    if (chunkHash) {
+                        chunkHashes[chunkIndex] = chunkHash;
+                    }
+                    
+                    // 获取二进制数据
+                    const blob = await response.blob();
+                    
+                    // 存储下载的数据
+                    downloadedData[chunkIndex] = blob;
+                    
+                    // 如果启用了完整性校验并且有分块哈希，验证分块完整性
+                    let isVerified = false;
+                    if (isIntegrityCheckEnabled && chunkHash) {
+                        isVerified = await verifyChunkIntegrity(blob, chunkHash, chunkIndex);
+                    }
+                    
+                    // 标记分块为已下载
+                    downloadedChunks[chunkIndex] = true;
+                    downloadedBytes += blob.size;
+                    
+                    // 更新UI
+                    if (chunkElement) {
+                        chunkElement.classList.remove('downloading');
+                        chunkElement.classList.add('downloaded');
+                        
+                        if (isVerified) {
+                            chunkElement.classList.add('verified');
+                        }
+                    }
+                    
+                    // 更新进度
+                    const completedChunks = downloadedChunks.filter(Boolean).length;
+                    updateProgress(completedChunks, totalChunks);
+                    
+                    // 检查是否全部下载完成
+                    if (completedChunks === totalChunks) {
+                        downloadCompleted();
+                    }
+                } catch (error) {
+                    console.error(`下载分块 ${chunkIndex} 失败:`, error);
+                    
+                    // 将失败的分块重新加入队列
+                    downloadQueue.push(chunkIndex);
+                    
+                    // 更新UI
+                    if (chunkElement) {
+                        chunkElement.classList.remove('downloading');
+                    }
+                    
+                    // 显示错误
+                    showError(`下载分块 ${chunkIndex} 失败: ${error.message}`);
+                } finally {
+                    activeDownloads--;
+                    
+                    // 继续下载其他分块
+                    if (isDownloading && !isPaused) {
+                        startDownloadChunks();
+                    }
+                }
+            }
+            
+            // 验证分块完整性
+            async function verifyChunkIntegrity(blob, expectedHash, chunkIndex) {
+                try {
+                    const arrayBuffer = await blob.arrayBuffer();
+                    const hashBuffer = await crypto.subtle.digest('SHA-256', arrayBuffer);
+                    const hashArray = Array.from(new Uint8Array(hashBuffer));
+                    const actualHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+                    
+                    if (actualHash === expectedHash) {
+                        console.log(`分块 ${chunkIndex} 验证成功`);
+                        return true;
+                    } else {
+                        console.error(`分块 ${chunkIndex} 验证失败, 预期: ${expectedHash}, 实际: ${actualHash}`);
+                        return false;
+                    }
+                } catch (error) {
+                    console.error('验证分块完整性失败:', error);
+                    return false;
+                }
+            }
+            
+            // 下载完成
+            function downloadCompleted() {
+                if (!isDownloading) return;
+                
+                // 更新UI
+                downloadStatus.textContent = '下载完成，可以保存文件';
+                saveFileBtn.disabled = false;
+                startDownloadBtn.disabled = true;
+                pauseBtn.disabled = true;
+                resumeBtn.disabled = true;
+                
+                // 如果启用了完整性校验且服务器提供了文件哈希，启用文件校验按钮
+                if (isIntegrityCheckEnabled && fileHash) {
+                    verifyFileBtn.disabled = false;
+                }
+                
+                // 停止计算下载速度
+                stopSpeedCalculation();
+                
+                // 显示结果
+                downloadResult.textContent = `文件下载完成: ${selectedFileName}, 大小: ${formatFileSize(fileSize)}`;
+                downloadResult.style.display = 'block';
+            }
+            
+            // 验证下载的文件完整性
+            async function verifyDownloadedFile() {
+                if (!downloadedData.length || !fileHash) return;
+                
+                try {
+                    downloadStatus.textContent = '正在验证文件完整性...';
+                    verifyFileBtn.disabled = true;
+                    
+                    // 合并所有分块
+                    const blob = new Blob(downloadedData, { type: 'application/octet-stream' });
+                    
+                    // 计算整个文件的哈希值
+                    const arrayBuffer = await blob.arrayBuffer();
+                    const hashBuffer = await crypto.subtle.digest('SHA-256', arrayBuffer);
+                    const hashArray = Array.from(new Uint8Array(hashBuffer));
+                    const actualHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+                    
+                    if (actualHash === fileHash) {
+                        hashProgressInfo.textContent = '文件完整性验证通过';
+                        hashProgressInfo.className = 'integrity-info verification-success';
+                        hashProgressInfo.style.display = 'block';
+                        downloadStatus.textContent = '文件完整性验证通过，可以保存文件';
+                    } else {
+                        hashProgressInfo.textContent = '文件完整性验证失败\n预期哈希: ' + fileHash + '\n实际哈希: ' + actualHash;
+                        hashProgressInfo.className = 'integrity-info verification-failed';
+                        hashProgressInfo.style.display = 'block';
+                        downloadStatus.textContent = '文件完整性验证失败';
+                    }
+                    
+                    verifyFileBtn.disabled = false;
+                } catch (error) {
+                    showError('文件完整性验证失败: ' + error.message);
+                    verifyFileBtn.disabled = false;
+                }
+            }
+            
+            // 暂停下载
+            function pauseDownload() {
+                if (!isDownloading) return;
+                
+                isPaused = true;
+                pauseBtn.disabled = true;
+                resumeBtn.disabled = false;
+                downloadStatus.textContent = '下载已暂停';
+                
+                stopSpeedCalculation();
+            }
+            
+            // 继续下载
+            function resumeDownload() {
+                if (!isDownloading || !isPaused) return;
+                
+                isPaused = false;
+                pauseBtn.disabled = false;
+                resumeBtn.disabled = true;
+                downloadStatus.textContent = '下载继续中...';
+                
+                // 继续下载剩余分块
+                startDownloadChunks();
+                
+                startSpeedCalculation();
+            }
+            
+            // 保存文件
+            function saveFile() {
+                if (!downloadedData.length) return;
+                
+                // 合并所有分块
+                const blob = new Blob(downloadedData, { type: 'application/octet-stream' });
+                
+                // 创建下载链接
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = selectedFileName;
+                document.body.appendChild(a);
+                a.click();
+                
+                // 清理
+                setTimeout(() => {
+                    document.body.removeChild(a);
+                    URL.revokeObjectURL(url);
+                }, 0);
+            }
+            
+            // 取消下载
+            function cancelDownload() {
+                if (!isDownloading && !isPaused) return;
+                
+                // 重置下载状态
+                resetDownloadState();
+                
+                // 更新UI
+                downloadStatus.textContent = '下载已取消';
+                progressContainer.style.display = 'none';
+                downloadControls.style.display = 'none';
+                hashProgressInfo.style.display = 'none';
+                
+                stopSpeedCalculation();
+            }
+            
+            // 开始计算下载速度
+            function startSpeedCalculation() {
+                if (speedInterval) clearInterval(speedInterval);
+                
+                let lastBytes = 0;
+                let lastTime = Date.now();
+                
+                speedInterval = setInterval(() => {
+                    const now = Date.now();
+                    const timeElapsed = now - lastTime;
+                    const bytesDownloaded = downloadedBytes - lastBytes;
+                    
+                    if (timeElapsed > 0) {
+                        const speed = bytesDownloaded / (timeElapsed / 1000);
+                        downloadSpeed.textContent = `下载速度: ${formatFileSize(speed)}/s`;
+                        
+                        lastBytes = downloadedBytes;
+                        lastTime = now;
+                    }
+                }, 1000);
+            }
+            
+            // 停止计算下载速度
+            function stopSpeedCalculation() {
+                if (speedInterval) {
+                    clearInterval(speedInterval);
+                    speedInterval = null;
+                }
+            }
+            
+            // 初始化分块网格
+            function initChunksGrid() {
+                chunksGrid.innerHTML = '';
+                
+                for (let i = 0; i < totalChunks; i++) {
+                    const chunk = document.createElement('div');
+                    chunk.className = 'chunk';
+                    chunk.id = `chunk-${i}`;
+                    
+                    if (downloadedChunks[i]) {
+                        chunk.classList.add('downloaded');
+                    }
+                    
+                    chunksGrid.appendChild(chunk);
+                }
+            }
+            
+            // 更新下载进度
+            function updateProgress(completed, total) {
+                const percent = Math.round((completed / total) * 100);
+                
+                progressBar.style.width = `${percent}%`;
+                downloadPercentage.textContent = `${percent}%`;
+                downloadStatus.textContent = `已下载 ${completed}/${total} 块`;
+            }
+            
+            // 显示错误信息
+            function showError(message) {
+                errorMessage.textContent = message;
+                errorMessage.style.display = 'block';
+                
+                // 3秒后自动隐藏
+                setTimeout(() => {
+                    errorMessage.style.display = 'none';
+                }, 3000);
+            }
+            
+            // 重置下载UI
+            function resetDownloadUI() {
+                progressBar.style.width = '0%';
+                downloadPercentage.textContent = '0%';
+                downloadStatus.textContent = '准备下载...';
+                downloadSpeed.textContent = '';
+                errorMessage.style.display = 'none';
+                downloadResult.style.display = 'none';
+                hashProgressInfo.style.display = 'none';
+            }
+            
+            // 重置下载状态
+            function resetDownloadState() {
+                isDownloading = false;
+                isPaused = false;
+                activeDownloads = 0;
+                downloadedBytes = 0;
+                downloadedData = [];
+            }
+            
+            // 格式化文件大小
+            function formatFileSize(bytes) {
+                if (bytes === 0) return '0 Bytes';
+                
+                const k = 1024;
+                const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
+                const i = Math.floor(Math.log(bytes) / Math.log(k));
+                
+                return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+            }
+        });
+    </script>
+</body>
+</html> 
