@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>大文件上传测试</title>
+    <!-- 引入SparkMD5库 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/spark-md5/3.0.2/spark-md5.min.js"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -144,6 +146,23 @@
             background-color: #f8d7da;
             color: #721c24;
         }
+        .hash-progress-container {
+            margin-top: 10px;
+            margin-bottom: 10px;
+        }
+        .hash-progress-bar {
+            height: 10px;
+            background-color: #f0f0f0;
+            border-radius: 5px;
+            overflow: hidden;
+            margin-top: 5px;
+        }
+        .hash-progress-bar-inner {
+            height: 100%;
+            width: 0;
+            background-color: #2196F3;
+            transition: width 0.2s;
+        }
     </style>
 </head>
 <body>
@@ -254,6 +273,22 @@
             // API基础URL
             const apiBaseUrl = 'http://localhost:8080/file';
             
+            // 添加哈希计算进度显示元素
+            let hashProgressContainer = document.createElement('div');
+            hashProgressContainer.className = 'hash-progress-container';
+            hashProgressContainer.innerHTML = `
+                <div id="hashProgressInfo">哈希计算: 0%</div>
+                <div class="hash-progress-bar">
+                    <div class="hash-progress-bar-inner" id="hashProgressBar"></div>
+                </div>
+            `;
+            hashProgressContainer.style.display = 'none';
+            fileInfo.appendChild(hashProgressContainer);
+            
+            // 获取哈希计算进度元素
+            const hashProgressInfo = document.getElementById('hashProgressInfo');
+            const hashProgressBar = document.getElementById('hashProgressBar');
+            
             // 文件选择事件处理
             fileInput.addEventListener('change', function(e) {
                 const file = e.target.files[0];
@@ -283,17 +318,15 @@
                 }
             });
             
-            // 计算文件SHA-256哈希值
+            // 使用SparkMD5计算文件哈希（分块计算）
             async function calculateFileHash(file) {
                 fileHashEl.textContent = '计算中...';
+                hashProgressContainer.style.display = 'block';
+                hashProgressBar.style.width = '0%';
+                hashProgressInfo.textContent = '哈希计算: 0%';
                 
                 try {
-                    // 使用Web Crypto API计算SHA-256哈希
-                    const buffer = await file.arrayBuffer();
-                    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
-                    const hashArray = Array.from(new Uint8Array(hashBuffer));
-                    const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-                    
+                    const hashHex = await calculateFileHashWithSparkMD5(file, updateHashProgress);
                     fileHash = hashHex;
                     fileHashEl.textContent = hashHex;
                     return hashHex;
@@ -301,16 +334,93 @@
                     console.error('计算文件哈希失败:', error);
                     fileHashEl.textContent = '哈希计算失败';
                     return null;
+                } finally {
+                    // 隐藏进度条
+                    setTimeout(() => {
+                        hashProgressContainer.style.display = 'none';
+                    }, 500);
                 }
             }
             
-            // 计算分块SHA-256哈希值
+            // 更新哈希计算进度UI
+            function updateHashProgress(percent) {
+                hashProgressBar.style.width = `${percent}%`;
+                hashProgressInfo.textContent = `哈希计算: ${percent}%`;
+            }
+            
+            // 使用SparkMD5分块计算文件哈希
+            function calculateFileHashWithSparkMD5(file, onProgress) {
+                return new Promise((resolve, reject) => {
+                    // 设置分块大小为2MB
+                    const chunkSize = 2 * 1024 * 1024;
+                    const chunks = Math.ceil(file.size / chunkSize);
+                    let currentChunk = 0;
+                    
+                    // 创建SparkMD5实例
+                    const spark = new SparkMD5.ArrayBuffer();
+                    const fileReader = new FileReader();
+                    
+                    // 文件块加载完成事件
+                    fileReader.onload = function(e) {
+                        try {
+                            // 向hash计算器添加数据
+                            spark.append(e.target.result);
+                            currentChunk++;
+                            
+                            // 更新进度
+                            if(onProgress) {
+                                onProgress(Math.floor((currentChunk / chunks) * 100));
+                            }
+                            
+                            // 检查是否完成
+                            if(currentChunk < chunks) {
+                                // 加载下一块
+                                loadNext();
+                            } else {
+                                // 完成并获取hash
+                                const hashResult = spark.end();
+                                resolve(hashResult);
+                            }
+                        } catch (error) {
+                            reject(error);
+                        }
+                    };
+                    
+                    // 文件读取错误处理
+                    fileReader.onerror = function(error) {
+                        reject(error);
+                    };
+                    
+                    // 加载下一个文件块
+                    function loadNext() {
+                        const start = currentChunk * chunkSize;
+                        const end = Math.min(start + chunkSize, file.size);
+                        const chunk = file.slice(start, end);
+                        fileReader.readAsArrayBuffer(chunk);
+                    }
+                    
+                    // 开始加载第一块
+                    loadNext();
+                });
+            }
+            
+            // 计算分块哈希
             async function calculateChunkHash(chunk) {
                 try {
-                    const buffer = await chunk.arrayBuffer();
-                    const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
-                    const hashArray = Array.from(new Uint8Array(hashBuffer));
-                    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+                    // 使用SparkMD5计算分块哈希
+                    return new Promise((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onload = function(e) {
+                            const spark = new SparkMD5.ArrayBuffer();
+                            spark.append(e.target.result);
+                            const hash = spark.end();
+                            resolve(hash);
+                        };
+                        reader.onerror = function() {
+                            reject(new Error('分块哈希计算失败'));
+                        };
+                        reader.readAsArrayBuffer(chunk);
+                    });
                 } catch (error) {
                     console.error('计算分块哈希失败:', error);
                     return null;

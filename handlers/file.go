@@ -233,8 +233,8 @@ func UploadChunk(c *gin.Context) {
 
 	// 如果提供了分块哈希值，验证分块完整性
 	if chunkHash != "" {
-		// 计算保存的分块文件哈希值
-		calculatedHash, err := utils.CalculateChunkSHA256(chunkPath)
+		// 计算保存的分块文件哈希值 - 使用MD5而非SHA256
+		calculatedHash, err := utils.CalculateChunkMD5(chunkPath)
 		if err != nil {
 			os.Remove(chunkPath) // 删除有问题的文件
 			c.JSON(http.StatusInternalServerError, gin.H{
@@ -354,8 +354,8 @@ func CompleteUpload(c *gin.Context) {
 	var calculatedFileHash string
 
 	if uploadInfo.FileHash != "" {
-		// 计算合并后的文件哈希值
-		calculatedFileHash, err = utils.CalculateFileSHA256(finalPath)
+		// 计算合并后的文件哈希值 - 使用MD5而非SHA256
+		calculatedFileHash, err = utils.CalculateFileMD5(finalPath)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{
 				"error": "计算文件哈希值失败: " + err.Error(),
@@ -538,8 +538,8 @@ func InitDownload(c *gin.Context) {
 	// 生成文件唯一标识
 	fileID := utils.GenerateFileID(fileName, fileSize)
 
-	// 计算文件哈希值
-	fileHash, err := utils.CalculateFileSHA256(filePath)
+	// 计算文件哈希值 - 使用MD5而非SHA256
+	fileHash, err := utils.CalculateFileMD5(filePath)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"error": "计算文件哈希值失败: " + err.Error(),
@@ -562,6 +562,7 @@ func InitDownload(c *gin.Context) {
 		FileHash:    fileHash,
 		ChunkHashes: chunkHashes,
 	}
+
 	models.SaveDownloadInfo(downloadInfo)
 
 	// 启动后台协程计算每个分块的哈希值
@@ -606,8 +607,8 @@ func calculateChunkHashes(info *models.DownloadInfo) {
 			continue
 		}
 
-		// 计算哈希值
-		hash := utils.CalculateDataSHA256(buffer[:n])
+		// 计算哈希值 - 使用MD5而非SHA256
+		hash := utils.CalculateDataMD5(buffer[:n])
 
 		// 保存分块哈希值
 		info.Mu.Lock()

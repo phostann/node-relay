@@ -4,6 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>大文件下载测试</title>
+    <!-- 引入SparkMD5库 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/spark-md5/3.0.2/spark-md5.min.js"></script>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -611,18 +613,32 @@
             // 验证分块完整性
             async function verifyChunkIntegrity(blob, expectedHash, chunkIndex) {
                 try {
-                    const arrayBuffer = await blob.arrayBuffer();
-                    const hashBuffer = await crypto.subtle.digest('SHA-256', arrayBuffer);
-                    const hashArray = Array.from(new Uint8Array(hashBuffer));
-                    const actualHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-                    
-                    if (actualHash === expectedHash) {
-                        console.log(`分块 ${chunkIndex} 验证成功`);
-                        return true;
-                    } else {
-                        console.error(`分块 ${chunkIndex} 验证失败, 预期: ${expectedHash}, 实际: ${actualHash}`);
-                        return false;
-                    }
+                    // 使用SparkMD5计算分块哈希
+                    return new Promise((resolve, reject) => {
+                        const reader = new FileReader();
+                        reader.onload = function(e) {
+                            try {
+                                const spark = new SparkMD5.ArrayBuffer();
+                                spark.append(e.target.result);
+                                const actualHash = spark.end();
+                                
+                                if (actualHash === expectedHash) {
+                                    console.log(`分块 ${chunkIndex} 验证成功`);
+                                    resolve(true);
+                                } else {
+                                    console.error(`分块 ${chunkIndex} 验证失败, 预期: ${expectedHash}, 实际: ${actualHash}`);
+                                    resolve(false);
+                                }
+                            } catch (error) {
+                                console.error('验证分块完整性失败:', error);
+                                reject(error);
+                            }
+                        };
+                        reader.onerror = function(error) {
+                            reject(error);
+                        };
+                        reader.readAsArrayBuffer(blob);
+                    });
                 } catch (error) {
                     console.error('验证分块完整性失败:', error);
                     return false;
@@ -664,11 +680,50 @@
                     // 合并所有分块
                     const blob = new Blob(downloadedData, { type: 'application/octet-stream' });
                     
-                    // 计算整个文件的哈希值
+                    // 使用SparkMD5计算整个文件的哈希值
                     const arrayBuffer = await blob.arrayBuffer();
-                    const hashBuffer = await crypto.subtle.digest('SHA-256', arrayBuffer);
-                    const hashArray = Array.from(new Uint8Array(hashBuffer));
-                    const actualHash = hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+                    const spark = new SparkMD5.ArrayBuffer();
+                    
+                    // 由于大文件可能导致内存问题，分块计算哈希
+                    const chunkSize = 2 * 1024 * 1024; // 2MB一块
+                    const chunks = Math.ceil(arrayBuffer.byteLength / chunkSize);
+                    
+                    let actualHash = '';
+                    hashProgressInfo.textContent = '正在计算文件哈希(0%)...';
+                    hashProgressInfo.className = 'integrity-info';
+                    hashProgressInfo.style.display = 'block';
+                    
+                    // 使用Promise处理分块哈希计算
+                    await new Promise((resolve) => {
+                        let currentChunk = 0;
+                        
+                        function processNextChunk() {
+                            const start = currentChunk * chunkSize;
+                            const end = Math.min(start + chunkSize, arrayBuffer.byteLength);
+                            
+                            // 计算进度
+                            const percent = Math.floor((currentChunk / chunks) * 100);
+                            hashProgressInfo.textContent = `正在计算文件哈希(${percent}%)...`;
+                            
+                            // 处理当前块
+                            const chunk = arrayBuffer.slice(start, end);
+                            spark.append(chunk);
+                            
+                            currentChunk++;
+                            
+                            if (currentChunk < chunks) {
+                                // 使用setTimeout避免UI阻塞
+                                setTimeout(processNextChunk, 0);
+                            } else {
+                                // 完成哈希计算
+                                actualHash = spark.end();
+                                resolve();
+                            }
+                        }
+                        
+                        // 开始处理第一块
+                        processNextChunk();
+                    });
                     
                     if (actualHash === fileHash) {
                         hashProgressInfo.textContent = '文件完整性验证通过';
