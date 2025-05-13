@@ -14,7 +14,8 @@ import (
 type NodeMsgType string
 
 const (
-	Ping NodeMsgType = "ping"
+	Ping     NodeMsgType = "ping"
+	InitNode NodeMsgType = "init_node"
 )
 
 // WebSocketManager 管理所有WebSocket连接和相关操作
@@ -41,6 +42,13 @@ func NewWebSocketManager() *WebSocketManager {
 			},
 		},
 	}
+}
+
+func (m *WebSocketManager) GetNodeConnById(uid string) []*websocket.Conn {
+	m.connMutex.RLock()
+	defer m.connMutex.RUnlock()
+
+	return m.nodeConnections[uid]
 }
 
 // 全局WebSocket管理器实例
@@ -221,6 +229,8 @@ func (m *WebSocketManager) handleTextMsg(ws *websocket.Conn, msg []byte, uid str
 	switch textMsg.Type {
 	case Ping:
 		m.handlePing(ws)
+	case InitNode:
+		m.handleInitNode(textMsg.Data)
 	// 可以在此添加更多消息类型的处理分支
 	default:
 		fmt.Printf("收到未知类型的消息: %s\n", textMsg.Type)
@@ -243,4 +253,24 @@ func (m *WebSocketManager) handlePing(ws *websocket.Conn) {
 	if err := ws.WriteMessage(websocket.TextMessage, bytes); err != nil {
 		fmt.Println("发送pong消息失败:", err)
 	}
+}
+
+// handleInitNode 处理初始化节点消息
+func (m *WebSocketManager) handleInitNode(data *interface{}) {
+	// 将 data 强转为字符串
+	uid, ok := (*data).(string)
+	if !ok {
+		fmt.Println("data 不是字符串")
+		return
+	}
+	wsManager.connMutex.Lock()
+	nodeConn := wsManager.nodeConnections[uid]
+	if nodeConn == nil {
+		fmt.Println("节点不存在")
+		return
+	}
+	wsManager.connMutex.Unlock()
+	wsManager.SendMessage(uid, []byte("init_node_success"))
+	wsManager.SendMessage("111111", []byte("init_node_success"))
+
 }
