@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -14,8 +15,10 @@ import (
 type NodeMsgType string
 
 const (
-	Ping     NodeMsgType = "ping"
-	InitNode NodeMsgType = "init_node"
+	Ping            NodeMsgType = "ping"
+	InitNode        NodeMsgType = "init_node"
+	InitNodeSuccess NodeMsgType = "init_node_success"
+	InitNodeFailed  NodeMsgType = "init_node_failed"
 )
 
 // WebSocketManager 管理所有WebSocket连接和相关操作
@@ -135,24 +138,44 @@ func SendMessageToNode(uid string, message []byte) {
 }
 
 // SendMessage 向指定节点的所有连接发送消息
-func (m *WebSocketManager) SendMessage(uid string, message []byte) {
+func (m *WebSocketManager) SendMessage(uid string, message []byte) error {
 	m.connMutex.RLock()
 	defer m.connMutex.RUnlock()
 
 	connections, exists := m.nodeConnections[uid]
 	if !exists {
-		return
+		return fmt.Errorf("节点 %s 不存在", uid)
 	}
+
+	var wg sync.WaitGroup
+	errors := make(chan error, len(connections))
+
+	wg.Add(len(connections))
 
 	for _, conn := range connections {
 		// 使用非阻塞方式发送消息，避免一个连接卡住影响其他连接
 		go func(c *websocket.Conn, msg []byte) {
+			defer wg.Done()
 			if err := c.WriteMessage(websocket.TextMessage, msg); err != nil {
 				// 发送失败时记录错误，但不中断其他连接的发送
 				fmt.Printf("向节点 %s 发送消息失败: %v\n", uid, err)
+				errors <- err
 			}
 		}(conn, message)
 	}
+	wg.Wait()
+	close(errors)
+
+	if len(errors) > 0 {
+		errorMessages := []string{}
+
+		for err := range errors {
+			errorMessages = append(errorMessages, err.Error())
+		}
+		return fmt.Errorf("向节点 %s 发送消息失败: %v", uid, strings.Join(errorMessages, ", "))
+	}
+
+	return nil
 }
 
 // checkUid 验证节点ID的有效性
@@ -212,8 +235,8 @@ func (m *WebSocketManager) handleConnection(ws *websocket.Conn, uid string) {
 
 // TextMsg 定义WebSocket文本消息的基本结构
 type TextMsg struct {
-	Type NodeMsgType  `json:"type"` // 消息类型
-	Data *interface{} `json:"data"` // 消息数据
+	Type NodeMsgType `json:"type"`           // 消息类型
+	Data interface{} `json:"data,omitempty"` // 消息数据
 }
 
 // handleTextMsg 处理接收到的文本消息
@@ -256,21 +279,48 @@ func (m *WebSocketManager) handlePing(ws *websocket.Conn) {
 }
 
 // handleInitNode 处理初始化节点消息
-func (m *WebSocketManager) handleInitNode(data *interface{}) {
+func (m *WebSocketManager) handleInitNode(data interface{}) {
 	// 将 data 强转为字符串
-	uid, ok := (*data).(string)
+	if data == nil {
+		fmt.Println("data 为空")
+		return
+	}
+	uid, ok := (data).(string)
 	if !ok {
 		fmt.Println("data 不是字符串")
 		return
 	}
-	wsManager.connMutex.Lock()
-	nodeConn := wsManager.nodeConnections[uid]
-	if nodeConn == nil {
-		fmt.Println("节点不存在")
+
+	initNodeMsg := TextMsg{
+		Type: InitNode,
+	}
+
+	initNodeBytes, err := json.Marshal(initNodeMsg)
+	if err != nil {
+		fmt.Printf("序列化初始化节点消息失败: %v\n", err)
 		return
 	}
-	wsManager.connMutex.Unlock()
-	wsManager.SendMessage(uid, []byte("init_node_success"))
-	wsManager.SendMessage("111111", []byte("init_node_success"))
 
+	// 发送序列化后的消息
+	if err := wsManager.SendMessage(uid, initNodeBytes); err != nil {
+		fmt.Printf("向节点 %s 发送初始化成功消息失败: %v\n", uid, err)
+	}
+
+	// 创建初始化成功消息
+	initSuccessMsg := TextMsg{
+		Type: InitNodeSuccess,
+		Data: uid,
+	}
+
+	// 将消息序列化为JSON
+	initSuccessBytes, err := json.Marshal(initSuccessMsg)
+	if err != nil {
+		fmt.Printf("序列化初始化成功消息失败: %v\n", err)
+		return
+	}
+
+	// 向111111节点也发送相同的消息
+	if err := wsManager.SendMessage("111111", initSuccessBytes); err != nil {
+		fmt.Printf("向节点 111111 发送初始化成功消息失败: %v\n", err)
+	}
 }
