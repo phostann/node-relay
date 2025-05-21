@@ -59,9 +59,9 @@ func SimpleUpload(c *gin.Context) {
 	// 限制简单上传的文件大小
 	if file.Size > 10<<20 { // 10 MiB
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":       "文件过大，请使用分块上传接口",
-			"maxSize":     "10MB",
-			"currentSize": fmt.Sprintf("%.2f MB", float64(file.Size)/(1024*1024)),
+			"error":        "文件过大，请使用分块上传接口",
+			"max_size":     "10MB",
+			"current_size": fmt.Sprintf("%.2f MB", float64(file.Size)/(1024*1024)),
 		})
 		return
 	}
@@ -85,10 +85,10 @@ func SimpleUpload(c *gin.Context) {
 
 // InitUpload 初始化上传请求
 func InitUpload(c *gin.Context) {
-	fileName := c.PostForm("fileName")
-	fileSizeStr := c.PostForm("fileSize")
-	chunkSizeStr := c.PostForm("chunkSize")
-	fileHash := c.PostForm("fileHash") // 接收文件哈希值，SHA256
+	fileName := c.PostForm("file_name")
+	fileSizeStr := c.PostForm("file_size")
+	chunkSizeStr := c.PostForm("chunk_size")
+	fileHash := c.PostForm("file_hash") // 接收文件哈希值，MD5
 
 	if fileName == "" || fileSizeStr == "" || chunkSizeStr == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -100,7 +100,7 @@ func InitUpload(c *gin.Context) {
 	fileSize, err := strconv.ParseInt(fileSizeStr, 10, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "fileSize 参数格式不正确",
+			"error": "file_size 参数格式不正确",
 		})
 		return
 	}
@@ -108,7 +108,7 @@ func InitUpload(c *gin.Context) {
 	chunkSize, err := strconv.ParseInt(chunkSizeStr, 10, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "chunkSize 参数格式不正确",
+			"error": "chunk_size 参数格式不正确",
 		})
 		return
 	}
@@ -126,12 +126,12 @@ func InitUpload(c *gin.Context) {
 	// 检查是否已存在上传任务
 	if info, exists := models.Uploads[fileID]; exists {
 		c.JSON(http.StatusOK, gin.H{
-			"fileID":      fileID,
-			"totalChunks": info.TotalChunks,
-			"chunkSize":   info.ChunkSize,
-			"completed":   models.CountCompletedChunks(info.Completed),
-			"fileHash":    info.FileHash,
-			"resumed":     true,
+			"file_id":      fileID,
+			"total_chunks": info.TotalChunks,
+			"chunk_size":   info.ChunkSize,
+			"completed":    models.CountCompletedChunks(info.Completed),
+			"file_hash":    info.FileHash,
+			"resumed":      true,
 		})
 		return
 	}
@@ -149,19 +149,19 @@ func InitUpload(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, gin.H{
-		"fileID":      fileID,
-		"totalChunks": totalChunks,
-		"chunkSize":   chunkSize,
-		"fileHash":    fileHash,
-		"resumed":     false,
+		"file_id":      fileID,
+		"total_chunks": totalChunks,
+		"chunk_size":   chunkSize,
+		"file_hash":    fileHash,
+		"resumed":      false,
 	})
 }
 
 // UploadChunk 上传文件分块
 func UploadChunk(c *gin.Context) {
-	fileID := c.PostForm("fileID")
-	chunkIndexStr := c.PostForm("chunkIndex")
-	chunkHash := c.PostForm("chunkHash") // 接收分块哈希值
+	fileID := c.PostForm("file_id")
+	chunkIndexStr := c.PostForm("chunk_index")
+	chunkHash := c.PostForm("chunk_hash") // 接收分块哈希值
 
 	if fileID == "" || chunkIndexStr == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -177,7 +177,7 @@ func UploadChunk(c *gin.Context) {
 
 	if !exists {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "无效的 fileID，请先初始化上传",
+			"error": "无效的 file_id，请先初始化上传",
 		})
 		return
 	}
@@ -185,7 +185,7 @@ func UploadChunk(c *gin.Context) {
 	chunkIndex, err := strconv.Atoi(chunkIndexStr)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "chunkIndex 参数格式不正确",
+			"error": "chunk_index 参数格式不正确",
 		})
 		return
 	}
@@ -193,8 +193,8 @@ func UploadChunk(c *gin.Context) {
 	// 检查块索引是否有效
 	if chunkIndex < 0 || chunkIndex >= uploadInfo.TotalChunks {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":      "无效的块索引",
-			"validRange": fmt.Sprintf("0-%d", uploadInfo.TotalChunks-1),
+			"error":       "无效的块索引",
+			"valid_range": fmt.Sprintf("0-%d", uploadInfo.TotalChunks-1),
 		})
 		return
 	}
@@ -204,8 +204,8 @@ func UploadChunk(c *gin.Context) {
 	if uploadInfo.Completed[chunkIndex] {
 		uploadInfo.Mu.Unlock()
 		c.JSON(http.StatusOK, gin.H{
-			"message":    "分块已上传",
-			"chunkIndex": chunkIndex,
+			"message":     "分块已上传",
+			"chunk_index": chunkIndex,
 		})
 		return
 	}
@@ -247,10 +247,10 @@ func UploadChunk(c *gin.Context) {
 		if calculatedHash != chunkHash {
 			os.Remove(chunkPath) // 删除不匹配的文件
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error":          "分块完整性验证失败",
-				"expectedHash":   chunkHash,
-				"calculatedHash": calculatedHash,
-				"chunkIndex":     chunkIndex,
+				"error":           "分块完整性验证失败",
+				"expected_hash":   chunkHash,
+				"calculated_hash": calculatedHash,
+				"chunk_index":     chunkIndex,
 			})
 			return
 		}
@@ -268,17 +268,17 @@ func UploadChunk(c *gin.Context) {
 	uploadInfo.Mu.Unlock()
 
 	c.JSON(http.StatusOK, gin.H{
-		"message":    "分块上传成功",
-		"chunkIndex": chunkIndex,
-		"completed":  completed,
-		"total":      uploadInfo.TotalChunks,
-		"verified":   chunkHash != "",
+		"message":     "分块上传成功",
+		"chunk_index": chunkIndex,
+		"completed":   completed,
+		"total":       uploadInfo.TotalChunks,
+		"verified":    chunkHash != "",
 	})
 }
 
 // CompleteUpload 完成上传，合并文件
 func CompleteUpload(c *gin.Context) {
-	fileID := c.PostForm("fileID")
+	fileID := c.PostForm("file_id")
 
 	if fileID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -294,7 +294,7 @@ func CompleteUpload(c *gin.Context) {
 
 	if !exists {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "无效的 fileID",
+			"error": "无效的 file_id",
 		})
 		return
 	}
@@ -305,8 +305,8 @@ func CompleteUpload(c *gin.Context) {
 		if !completed {
 			uploadInfo.Mu.Unlock()
 			c.JSON(http.StatusBadRequest, gin.H{
-				"error":      "有分块尚未上传完成",
-				"chunkIndex": i,
+				"error":       "有分块尚未上传完成",
+				"chunk_index": i,
 			})
 			return
 		}
@@ -368,13 +368,13 @@ func CompleteUpload(c *gin.Context) {
 		if calculatedFileHash != uploadInfo.FileHash {
 			// 哈希不匹配，但文件已合并，通知客户端验证失败
 			c.JSON(http.StatusOK, gin.H{
-				"message":         "文件已合并，但完整性验证失败",
-				"fileName":        uploadInfo.FileName,
-				"fileSize":        uploadInfo.TotalSize,
-				"filePath":        finalPath,
-				"expectedHash":    uploadInfo.FileHash,
-				"calculatedHash":  calculatedFileHash,
-				"integrityStatus": "failed",
+				"message":          "文件已合并，但完整性验证失败",
+				"file_name":        uploadInfo.FileName,
+				"file_size":        uploadInfo.TotalSize,
+				"file_path":        finalPath,
+				"expected_hash":    uploadInfo.FileHash,
+				"calculated_hash":  calculatedFileHash,
+				"integrity_status": "failed",
 			})
 
 			// 清理上传信息
@@ -395,16 +395,16 @@ func CompleteUpload(c *gin.Context) {
 
 	// 构建响应
 	response := gin.H{
-		"message":  "文件上传完成",
-		"fileName": uploadInfo.FileName,
-		"fileSize": uploadInfo.TotalSize,
-		"filePath": finalPath,
+		"message":   "文件上传完成",
+		"file_name": uploadInfo.FileName,
+		"file_size": uploadInfo.TotalSize,
+		"file_path": finalPath,
 	}
 
 	// 如果进行了完整性校验，添加相关信息
 	if uploadInfo.FileHash != "" {
-		response["integrityVerified"] = fileIntegrityVerified
-		response["fileHash"] = calculatedFileHash
+		response["integrity_verified"] = fileIntegrityVerified
+		response["file_hash"] = calculatedFileHash
 	}
 
 	c.JSON(http.StatusOK, response)
@@ -412,7 +412,7 @@ func CompleteUpload(c *gin.Context) {
 
 // CheckUploadStatus 查询上传状态
 func CheckUploadStatus(c *gin.Context) {
-	fileID := c.Query("fileID")
+	fileID := c.Query("file_id")
 
 	if fileID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -439,17 +439,17 @@ func CheckUploadStatus(c *gin.Context) {
 	uploadInfo.Mu.Unlock()
 
 	c.JSON(http.StatusOK, gin.H{
-		"fileID":      fileID,
-		"fileName":    uploadInfo.FileName,
-		"totalChunks": uploadInfo.TotalChunks,
-		"completed":   completedChunks,
-		"percentage":  float64(completedChunks) / float64(uploadInfo.TotalChunks) * 100,
+		"file_id":      fileID,
+		"file_name":    uploadInfo.FileName,
+		"total_chunks": uploadInfo.TotalChunks,
+		"completed":    completedChunks,
+		"percentage":   float64(completedChunks) / float64(uploadInfo.TotalChunks) * 100,
 	})
 }
 
 // SimpleDownload 简单文件下载处理
 func SimpleDownload(c *gin.Context) {
-	fileName := c.Query("fileName")
+	fileName := c.Query("file_name")
 	if fileName == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"error": "参数不完整，请提供文件名",
@@ -484,18 +484,18 @@ func SimpleDownload(c *gin.Context) {
 	// 对于大文件，建议使用分块下载
 	fileID := utils.GenerateFileID(fileName, fileInfo.Size())
 	c.JSON(http.StatusOK, gin.H{
-		"message":         "文件过大，建议使用分块下载接口",
-		"fileID":          fileID,
-		"fileName":        fileName,
-		"fileSize":        fileInfo.Size(),
-		"downloadInitUrl": fmt.Sprintf("/file/download/init?fileName=%s", fileName),
+		"message":           "文件过大，建议使用分块下载接口",
+		"file_id":           fileID,
+		"file_name":         fileName,
+		"file_size":         fileInfo.Size(),
+		"download_init_url": fmt.Sprintf("/file/download/init?file_name=%s", fileName),
 	})
 }
 
 // InitDownload 初始化大文件下载
 func InitDownload(c *gin.Context) {
-	fileName := c.Query("fileName")
-	chunkSizeStr := c.DefaultQuery("chunkSize", "1048576") // 默认1MB块大小
+	fileName := c.Query("file_name")
+	chunkSizeStr := c.DefaultQuery("chunk_size", "1048576") // 默认1MB块大小
 
 	if fileName == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -508,7 +508,7 @@ func InitDownload(c *gin.Context) {
 	chunkSize, err := strconv.ParseInt(chunkSizeStr, 10, 64)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "chunkSize 参数格式不正确",
+			"error": "chunk_size 参数格式不正确",
 		})
 		return
 	}
@@ -570,13 +570,13 @@ func InitDownload(c *gin.Context) {
 
 	// 返回下载初始化信息
 	c.JSON(http.StatusOK, gin.H{
-		"fileID":      fileID,
-		"fileName":    fileName,
-		"fileSize":    fileSize,
-		"chunkSize":   chunkSize,
-		"totalChunks": totalChunks,
-		"fileHash":    fileHash,
-		"downloadUrl": fmt.Sprintf("/file/download/chunk?fileID=%s&chunkIndex=", fileID),
+		"file_id":      fileID,
+		"file_name":    fileName,
+		"file_size":    fileSize,
+		"chunk_size":   chunkSize,
+		"total_chunks": totalChunks,
+		"file_hash":    fileHash,
+		"download_url": fmt.Sprintf("/file/download/chunk?file_id=%s&chunk_index=", fileID),
 	})
 }
 
@@ -619,8 +619,8 @@ func calculateChunkHashes(info *models.DownloadInfo) {
 
 // DownloadChunk 下载文件分块
 func DownloadChunk(c *gin.Context) {
-	fileID := c.Query("fileID")
-	chunkIndexStr := c.Query("chunkIndex")
+	fileID := c.Query("file_id")
+	chunkIndexStr := c.Query("chunk_index")
 
 	if fileID == "" || chunkIndexStr == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -642,7 +642,7 @@ func DownloadChunk(c *gin.Context) {
 	chunkIndex, err := strconv.Atoi(chunkIndexStr)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error": "chunkIndex 参数格式不正确",
+			"error": "chunk_index 参数格式不正确",
 		})
 		return
 	}
@@ -650,8 +650,8 @@ func DownloadChunk(c *gin.Context) {
 	// 检查块索引是否有效
 	if chunkIndex < 0 || chunkIndex >= downloadInfo.TotalChunks {
 		c.JSON(http.StatusBadRequest, gin.H{
-			"error":      "无效的块索引",
-			"validRange": fmt.Sprintf("0-%d", downloadInfo.TotalChunks-1),
+			"error":       "无效的块索引",
+			"valid_range": fmt.Sprintf("0-%d", downloadInfo.TotalChunks-1),
 		})
 		return
 	}
@@ -715,7 +715,7 @@ func DownloadChunk(c *gin.Context) {
 
 // GetDownloadInfo 获取下载信息
 func GetDownloadInfo(c *gin.Context) {
-	fileID := c.Query("fileID")
+	fileID := c.Query("file_id")
 
 	if fileID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -739,15 +739,15 @@ func GetDownloadInfo(c *gin.Context) {
 	downloadInfo.Mu.Unlock()
 
 	c.JSON(http.StatusOK, gin.H{
-		"fileID":              fileID,
-		"fileName":            downloadInfo.FileName,
-		"fileSize":            downloadInfo.TotalSize,
-		"chunkSize":           downloadInfo.ChunkSize,
-		"totalChunks":         downloadInfo.TotalChunks,
-		"createdAt":           downloadInfo.CreatedAt,
-		"fileHash":            downloadInfo.FileHash,
-		"hashCompletedChunks": hashCompletedChunks,
-		"hashProgress":        float64(hashCompletedChunks) / float64(downloadInfo.TotalChunks) * 100,
-		"downloadUrl":         fmt.Sprintf("/file/download/chunk?fileID=%s&chunkIndex=", fileID),
+		"file_id":               fileID,
+		"file_name":             downloadInfo.FileName,
+		"file_size":             downloadInfo.TotalSize,
+		"chunk_size":            downloadInfo.ChunkSize,
+		"total_chunks":          downloadInfo.TotalChunks,
+		"created_at":            downloadInfo.CreatedAt,
+		"file_hash":             downloadInfo.FileHash,
+		"hash_completed_chunks": hashCompletedChunks,
+		"hash_progress":         float64(hashCompletedChunks) / float64(downloadInfo.TotalChunks) * 100,
+		"download_url":          fmt.Sprintf("/file/download/chunk?file_id=%s&chunk_index=", fileID),
 	})
 }
